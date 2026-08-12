@@ -67,6 +67,7 @@ interface ReplicaInput {
 export interface ReplicaCacheStorage {
   getItem: (key: string) => Promise<string | null>;
   setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
 }
 
 interface ReplicaCacheOptions {
@@ -79,6 +80,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasString(value: Record<string, unknown>, key: string): boolean {
   return typeof value[key] === "string";
+}
+
+function isTaskActivity(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
+  }
+  if (value.type === "created") {
+    return typeof value.count === "number";
+  }
+  return (
+    (value.type === "added" ||
+      value.type === "started" ||
+      value.type === "completed" ||
+      value.type === "reopened") &&
+    typeof value.task === "string"
+  );
 }
 
 function isStreamItem(value: unknown): value is StreamItem {
@@ -94,7 +111,9 @@ function isStreamItem(value: unknown): value is StreamItem {
     case "tool_call":
       return isRecord(value.payload) && isRecord(value.payload.data);
     case "todo_list":
-      return hasString(value, "provider") && Array.isArray(value.items);
+      return (
+        hasString(value, "provider") && Array.isArray(value.items) && isTaskActivity(value.activity)
+      );
     case "activity_log":
       return hasString(value, "message") && hasString(value, "activityType");
     case "compaction":
@@ -131,13 +150,15 @@ function decodeDates(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, decodeDates(entry)]));
 }
 
-function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["timeline"] {
+function deserializeTimeline(
+  stored: StoredHost["timeline"],
+): SessionReplica["timeline"] | undefined {
   if (!stored) {
     return null;
   }
   const decoded = decodeDates(stored.items);
   if (!Array.isArray(decoded) || !decoded.every(isStreamItem)) {
-    return null;
+    return undefined;
   }
   return {
     agentId: stored.agentId,
@@ -275,7 +296,7 @@ function serializeHost(serverId: string, input: ReplicaInput): StoredHost {
   };
 }
 
-function deserializeHost(stored: StoredHost): SessionReplica {
+function deserializeHost(stored: StoredHost): SessionReplica | null {
   const agents = stored.agents.map((entry) => deserializeAgent(stored.serverId, entry));
   const workspaces = stored.workspaces.map(normalizeWorkspaceDescriptor);
   const listedProjects = stored.projects.map(normalizeProjectDescriptor);
@@ -286,11 +307,15 @@ function deserializeHost(stored: StoredHost): SessionReplica {
   const projects = new Map(
     [...legacyProjects, ...listedProjects].map((project) => [project.projectId, project]),
   );
+  const timeline = deserializeTimeline(stored.timeline);
+  if (timeline === undefined) {
+    return null;
+  }
   return {
     agents: new Map(agents.map((agent) => [agent.id, agent])),
     workspaces: new Map(workspaces.map((workspace) => [workspace.id, workspace])),
     projects,
-    timeline: deserializeTimeline(stored.timeline),
+    timeline,
   };
 }
 
@@ -364,6 +389,19 @@ export class ReplicaCache {
     }
     const cache = StoredCacheSchema.safeParse(parsed);
     if (!cache.success) return;
+    const replicas = new Map<string, SessionReplica>();
+    for (const host of cache.data.hosts) {
+      const replica = deserializeHost(host);
+      if (!replica) {
+        try {
+          await this.storage.removeItem(STORAGE_KEY);
+        } catch {
+          // A failed eviction must not make corrupt cache data displayable.
+        }
+        return;
+      }
+      replicas.set(host.serverId, replica);
+    }
     for (const host of cache.data.hosts) {
       if (!this.activeServerIds.has(host.serverId)) {
         this.needsPersist = true;
@@ -374,7 +412,9 @@ export class ReplicaCache {
     }
     if (this.buildBoundedPayload().evicted) this.needsPersist = true;
     for (const host of this.storedHosts.values()) {
-      useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
+      const replica = replicas.get(host.serverId);
+      if (!replica) continue;
+      useSessionStore.getState().restoreSessionReplica(host.serverId, replica);
       const session = useSessionStore.getState().sessions[host.serverId];
       if (session) {
         this.capturedInputs.set(

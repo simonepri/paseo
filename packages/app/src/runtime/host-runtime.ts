@@ -163,6 +163,7 @@ export interface HostRuntimeControllerDeps {
 export interface HostRuntimeStorage {
   getItem: (key: string) => Promise<string | null>;
   setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
 }
 
 export interface HostRuntimeStartOptions {
