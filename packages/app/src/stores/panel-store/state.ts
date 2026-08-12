@@ -30,9 +30,9 @@ export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
 // Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
 export const MAX_EXPLORER_SIDEBAR_WIDTH = 2000;
 
-export const DEFAULT_EXPLORER_FILES_SPLIT_RATIO = 0.38;
-export const MIN_EXPLORER_FILES_SPLIT_RATIO = 0.2;
-export const MAX_EXPLORER_FILES_SPLIT_RATIO = 0.8;
+export const DEFAULT_TREE_RAIL_WIDTH = 320;
+export const MIN_TREE_RAIL_WIDTH = 200;
+export const MAX_TREE_RAIL_WIDTH = 600;
 
 export interface PanelVisibilityState {
   isAgentListOpen: boolean;
@@ -69,8 +69,8 @@ export function clampExplorerWidth(width: number): number {
   return clampNumber(width, MIN_EXPLORER_SIDEBAR_WIDTH, MAX_EXPLORER_SIDEBAR_WIDTH);
 }
 
-export function clampExplorerFilesSplitRatio(ratio: number): number {
-  return clampNumber(ratio, MIN_EXPLORER_FILES_SPLIT_RATIO, MAX_EXPLORER_FILES_SPLIT_RATIO);
+export function clampTreeRailWidth(width: number): number {
+  return clampNumber(width, MIN_TREE_RAIL_WIDTH, MAX_TREE_RAIL_WIDTH);
 }
 
 export function selectPanelVisibility(
@@ -167,11 +167,6 @@ function migratePanelV2Explorer(state: MigratablePanelState, isWeb: boolean): vo
   if (isWeb && typeof state.explorerWidth === "number" && state.explorerWidth === 400) {
     state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
   }
-  if (typeof state.explorerFilesSplitRatio !== "number") {
-    state.explorerFilesSplitRatio = DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
-  } else {
-    state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(state.explorerFilesSplitRatio);
-  }
 }
 
 function migratePanelV3Explorer(state: MigratablePanelState, isWeb: boolean): void {
@@ -222,6 +217,15 @@ function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   }
 }
 
+function migrateTreeRailWidth(state: MigratablePanelState, version: number): void {
+  if (version < 13 || typeof state.treeRailWidth !== "number") {
+    delete state.explorerFilesSplitRatio;
+    state.treeRailWidth = DEFAULT_TREE_RAIL_WIDTH;
+    return;
+  }
+  state.treeRailWidth = clampTreeRailWidth(state.treeRailWidth);
+}
+
 export function migratePanelState(
   persistedState: unknown,
   version: number,
@@ -270,6 +274,7 @@ export function migratePanelState(
   if (typeof state.explorerShowHiddenFiles !== "boolean") {
     state.explorerShowHiddenFiles = true;
   }
+  migrateTreeRailWidth(state, version);
   if (version < 12) {
     // Compact panel position is transient UI state. Cold starts always begin
     // at content, regardless of what an older version persisted.

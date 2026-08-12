@@ -587,6 +587,7 @@ export const ptBR: TranslationResources = {
         renameAgent: "Renomear agente",
       },
       actions: {
+        newTab: "Nova aba",
         newAgent: "Novo agente",
         newTerminal: "Novo terminal",
         preparingTerminal: "Preparando aba de terminal",
@@ -595,6 +596,9 @@ export const ptBR: TranslationResources = {
         exitFocusMode: "Sair do modo de foco",
         splitRight: "Dividir painel à direita",
         splitDown: "Dividir painel abaixo",
+        changes: "Alterações",
+        files: "Arquivos",
+        pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
         editTerminalProfiles: "Editar perfis…",
         pinTarget: "Fixar",
@@ -1678,6 +1682,17 @@ export const ptBR: TranslationResources = {
         reloadTitle: "Recarregar do disco?",
         reloadMessage: "Suas alterações locais serão perdidas.",
       },
+    },
+    files: {
+      label: "Arquivos",
+      subtitle: "Arquivos do espaço de trabalho",
+      tooltip: "Explorar arquivos do espaço de trabalho",
+    },
+    pullRequest: {
+      label: "Pull request",
+      subtitle: "Detalhes do pull request",
+      emptyTitle: "No pull request yet",
+      emptyDescription: "Create a pull request for this checkout to see its details here.",
     },
     diff: {
       changesLabel: "Alterações",

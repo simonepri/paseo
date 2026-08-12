@@ -587,6 +587,7 @@ export const ru: TranslationResources = {
         renameAgent: "Переименовать агента",
       },
       actions: {
+        newTab: "Новая вкладка",
         newAgent: "Новый агент",
         newTerminal: "Новый терминал",
         preparingTerminal: "Подготовка вкладки терминала",
@@ -595,6 +596,9 @@ export const ru: TranslationResources = {
         exitFocusMode: "Выйти из режима фокусировки",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
+        changes: "Изменения",
+        files: "Файлы",
+        pullRequest: "Запрос на слияние",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "Закрепить",
@@ -1683,6 +1687,17 @@ export const ru: TranslationResources = {
         reloadTitle: "Перезагрузить с диска?",
         reloadMessage: "Локальные изменения будут потеряны.",
       },
+    },
+    files: {
+      label: "Файлы",
+      subtitle: "Файлы рабочего пространства",
+      tooltip: "Просмотр файлов рабочего пространства",
+    },
+    pullRequest: {
+      label: "Запрос на слияние",
+      subtitle: "Сведения о запросе на слияние",
+      emptyTitle: "No pull request yet",
+      emptyDescription: "Create a pull request for this checkout to see its details here.",
     },
     diff: {
       changesLabel: "Изменения",
