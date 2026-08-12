@@ -19,8 +19,7 @@ import {
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
 import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import { projectAgentSnapshot } from "@/runtime/directory-sync/agent-projection";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import type { DirectoryCursor, DirectoryCursors } from "@/runtime/directory-sync";
 
 const STORAGE_KEY = "@paseo:replica-cache";
