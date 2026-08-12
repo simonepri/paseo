@@ -5,7 +5,6 @@ import {
   ProjectPlacementPayloadSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceProjectDescriptorPayloadSchema,
-  type AgentSnapshotPayload,
   type WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import {
@@ -21,12 +20,14 @@ import {
 } from "@/stores/session-store";
 import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { projectAgentSnapshot } from "@/runtime/directory-sync/agent-projection";
+import type { DirectoryCursor, DirectoryCursors } from "@/runtime/directory-sync";
 
 const STORAGE_KEY = "@paseo:replica-cache";
 const CACHE_VERSION = 3;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
-const MAX_CACHE_BYTES = 1024 * 1024;
+const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const DATE_TAG = "__paseoDate";
 
 const StoredAgentSchema = z.object({
@@ -47,6 +48,15 @@ const StoredHostSchema = z.object({
   projects: z.array(WorkspaceProjectDescriptorPayloadSchema).optional().default([]),
   emptyProjects: z.array(WorkspaceProjectDescriptorPayloadSchema),
   timeline: StoredTimelineSchema.nullable(),
+  directorySync: z
+    .object({
+      projects: z.object({ generation: z.string(), afterSeq: z.number().nonnegative() }).optional(),
+      workspaces: z
+        .object({ generation: z.string(), afterSeq: z.number().nonnegative() })
+        .optional(),
+      agents: z.object({ generation: z.string(), afterSeq: z.number().nonnegative() }).optional(),
+    })
+    .optional(),
 });
 
 const StoredCacheSchema = z.object({
@@ -58,9 +68,10 @@ type StoredAgent = z.infer<typeof StoredAgentSchema>;
 type StoredHost = z.infer<typeof StoredHostSchema>;
 
 interface ReplicaInput {
-  agent: Agent | undefined;
-  workspace: WorkspaceDescriptor | undefined;
-  project: ProjectDescriptor | undefined;
+  agents: ReadonlyMap<string, Agent>;
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
+  projects: ReadonlyMap<string, ProjectDescriptor>;
+  focusedAgent: Agent | undefined;
   timelineItems: StreamItem[] | undefined;
 }
 
@@ -146,33 +157,7 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
 }
 
 function serializeAgent(agent: Agent): StoredAgent {
-  const snapshot: AgentSnapshotPayload = {
-    id: agent.id,
-    provider: agent.provider,
-    cwd: agent.cwd,
-    ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
-    model: agent.model,
-    ...(agent.features ? { features: agent.features } : {}),
-    thinkingOptionId: agent.thinkingOptionId ?? null,
-    createdAt: agent.createdAt.toISOString(),
-    updatedAt: agent.updatedAt.toISOString(),
-    lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
-    status: agent.status,
-    capabilities: agent.capabilities,
-    currentModeId: agent.currentModeId,
-    availableModes: agent.availableModes,
-    pendingPermissions: [],
-    persistence: agent.persistence,
-    ...(agent.runtimeInfo ? { runtimeInfo: agent.runtimeInfo } : {}),
-    ...(agent.lastUsage ? { lastUsage: agent.lastUsage } : {}),
-    ...(agent.lastError ? { lastError: agent.lastError } : {}),
-    title: agent.title,
-    labels: agent.labels,
-    requiresAttention: agent.requiresAttention ?? false,
-    attentionReason: agent.attentionReason ?? null,
-    attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
-    archivedAt: agent.archivedAt?.toISOString() ?? null,
-  };
+  const snapshot = { ...projectAgentSnapshot(agent), pendingPermissions: [] };
   return {
     snapshot,
     projectPlacement: agent.projectPlacement ?? null,
@@ -222,6 +207,7 @@ function serializeProject(project: ProjectDescriptor) {
     ...(project.projectKey ? { projectKey: project.projectKey } : {}),
     projectDisplayName: project.projectDisplayName,
     projectCustomName: project.projectCustomName,
+    projectCustomIconRevision: project.projectCustomIconRevision,
     projectRootPath: project.projectRootPath,
     projectKind: project.projectKind,
   };
@@ -229,49 +215,50 @@ function serializeProject(project: ProjectDescriptor) {
 
 function replicaInputsEqual(left: ReplicaInput, right: ReplicaInput): boolean {
   return (
-    left.agent === right.agent &&
-    left.workspace === right.workspace &&
-    left.project === right.project &&
+    left.agents === right.agents &&
+    left.workspaces === right.workspaces &&
+    left.projects === right.projects &&
+    left.focusedAgent === right.focusedAgent &&
     left.timelineItems === right.timelineItems
   );
 }
 
 function selectReplicaInput(session: SessionState, agentId: string | null): ReplicaInput {
   const agent = agentId ? session.agents.get(agentId) : undefined;
-  const workspace = agent
-    ? ((agent.workspaceId ? session.workspaces.get(agent.workspaceId) : undefined) ??
-      Array.from(session.workspaces.values()).find(
-        (candidate) => candidate.workspaceDirectory === agent.cwd,
-      ))
-    : undefined;
   const timeline = agentId
     ? selectAgentTimelineState(session, agentId)
     : { status: "cold" as const };
   return {
-    agent,
-    workspace,
-    project: workspace ? session.projects.get(workspace.projectId) : undefined,
+    agents: session.agents,
+    workspaces: session.workspaces,
+    projects: session.projects,
+    focusedAgent: agent,
     timelineItems: timeline.status === "cold" ? undefined : timeline.items,
   };
 }
 
-function serializeHost(serverId: string, input: ReplicaInput): StoredHost {
+function serializeHost(
+  serverId: string,
+  input: ReplicaInput,
+  directorySync?: DirectoryCursors,
+): StoredHost {
   const items = input.timelineItems?.filter(
     (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
   );
   return {
     serverId,
-    agents: input.agent ? [serializeAgent(input.agent)] : [],
-    workspaces: input.workspace ? [serializeWorkspace(input.workspace)] : [],
-    projects: input.project ? [serializeProject(input.project)] : [],
+    agents: Array.from(input.agents.values(), serializeAgent),
+    workspaces: Array.from(input.workspaces.values(), serializeWorkspace),
+    projects: Array.from(input.projects.values(), serializeProject),
     emptyProjects: [],
     timeline:
-      input.agent && items
+      input.focusedAgent && items
         ? {
-            agentId: input.agent.id,
+            agentId: input.focusedAgent.id,
             items: encodeDates(items.slice(-MAX_TIMELINE_ITEMS)),
           }
         : null,
+    ...(directorySync ? { directorySync } : {}),
   };
 }
 
@@ -421,6 +408,33 @@ export class ReplicaCache {
     this.schedulePersist();
   }
 
+  getDirectoryCursors(serverId: string): DirectoryCursors {
+    return { ...this.storedHosts.get(serverId)?.directorySync };
+  }
+
+  setDirectoryCursor(
+    serverId: string,
+    entity: keyof DirectoryCursors,
+    cursor: DirectoryCursor,
+  ): void {
+    let stored = this.storedHosts.get(serverId);
+    if (!stored) {
+      const session = useSessionStore.getState().sessions[serverId];
+      if (!session) return;
+      const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
+      this.capturedInputs.set(serverId, input);
+      stored = serializeHost(serverId, input);
+    }
+    const current = stored.directorySync?.[entity];
+    if (current?.generation === cursor.generation && current.afterSeq >= cursor.afterSeq) {
+      return;
+    }
+    const cursors = { ...stored.directorySync, [entity]: cursor };
+    this.storedHosts.delete(serverId);
+    this.storedHosts.set(serverId, { ...stored, directorySync: cursors });
+    this.schedulePersist();
+  }
+
   async flush(): Promise<void> {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -456,8 +470,9 @@ export class ReplicaCache {
     if (previous && replicaInputsEqual(previous, input)) return false;
 
     this.capturedInputs.set(serverId, input);
+    const directorySync = this.storedHosts.get(serverId)?.directorySync;
     this.storedHosts.delete(serverId);
-    this.storedHosts.set(serverId, serializeHost(serverId, input));
+    this.storedHosts.set(serverId, serializeHost(serverId, input, directorySync));
     return true;
   }
 
